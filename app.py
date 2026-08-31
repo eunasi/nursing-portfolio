@@ -1,59 +1,85 @@
-import streamlit as st
+import io
 import os
-from google import genai
 import docx
 import pypdf
+import streamlit as st
+from google import genai
 
 # 화면 설정
 st.set_page_config(page_title="간호학과 포트폴리오 점검", layout="centered")
 st.title("🩺 간호교육 포트폴리오 AI 점검")
-st.write("포트폴리오 파일들(PDF/Word)을 한꺼번에 업로드하면 AI가 통합 점검합니다.")
+st.write(
+    "포트폴리오 파일들(PDF/Word)을 한꺼번에 업로드하면 AI가 통합"
+    " 점검합니다."
+)
 
 # API 키 확인
 api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
 if not api_key:
-    st.error("API 키가 설정되지 않았습니다. Streamlit Secrets에서 GEMINI_API_KEY를 설정해 주세요.")
-    st.stop()
+  st.error(
+      "API 키가 설정되지 않았습니다. Streamlit Secrets에서"
+      " GEMINI_API_KEY를 설정해 주세요."
+  )
+  st.stop()
 
 client = genai.Client(api_key=api_key)
 
-# 다중 파일 업로드 (accept_multiple_files=True)
+# 다중 파일 업로드
 uploaded_files = st.file_uploader(
-    "포트폴리오 파일 선택 (.docx, .pdf) - 여러 파일 선택 가능", 
-    type=["docx", "pdf"], 
-    accept_multiple_files=True
+    "포트폴리오 파일 선택 (.docx, .pdf) - 여러 파일 선택 가능",
+    type=["docx", "pdf"],
+    accept_multiple_files=True,
 )
 
+
 def extract_text(file):
-    ext = os.path.splitext(file.name)[1].lower()
-    full_text = []
-    if ext == ".docx":
-        doc = docx.Document(file)
-        for para in doc.paragraphs:
-            full_text.append(para.text)
-    elif ext == ".pdf":
-        reader = pypdf.PdfReader(file)
-        for page in reader.pages:
-            text = page.extract_text()
-            if text:
-                full_text.append(text)
-    return "\n".join(full_text)
+  ext = os.path.splitext(file.name)[1].lower()
+  full_text = []
+  if ext == ".docx":
+    doc = docx.Document(file)
+    for para in doc.paragraphs:
+      full_text.append(para.text)
+  elif ext == ".pdf":
+    reader = pypdf.PdfReader(file)
+    for page in reader.pages:
+      text = page.extract_text()
+      if text:
+        full_text.append(text)
+  return "\n".join(full_text)
+
+
+def create_docx(report_text):
+  doc = docx.Document()
+  doc.add_heading("간호교육 포트폴리오 AI 점검 리포트", level=1)
+  for line in report_text.split("\n"):
+    if line.startswith("# "):
+      doc.add_heading(line.replace("# ", ""), level=1)
+    elif line.startswith("## "):
+      doc.add_heading(line.replace("## ", ""), level=2)
+    elif line.startswith("### "):
+      doc.add_heading(line.replace("### ", ""), level=3)
+    else:
+      doc.add_paragraph(line)
+
+  bio = io.BytesIO()
+  doc.save(bio)
+  return bio.getvalue()
+
 
 if uploaded_files:
-    st.info(f"선택된 파일 수: 총 {len(uploaded_files)}개")
-    for f in uploaded_files:
-        st.write(f"- {f.name}")
+  st.info(f"선택된 파일 수: 총 {len(uploaded_files)}개")
+  for f in uploaded_files:
+    st.write(f"- {f.name}")
 
-    if st.button("AI 점검 시작"):
-        with st.spinner("AI가 제출된 문서 전체를 통합 분석 중입니다..."):
-            try:
-                # 모든 파일의 텍스트 추출 및 결합
-                combined_text = ""
-                for file in uploaded_files:
-                    combined_text += f"\n\n--- [파일명: {file.name}] ---\n"
-                    combined_text += extract_text(file)
+  if st.button("AI 점검 시작"):
+    with st.spinner("AI가 제출된 문서 전체를 통합 분석 중입니다..."):
+      try:
+        combined_text = ""
+        for file in uploaded_files:
+          combined_text += f"\n\n--- [파일명: {file.name}] ---\n"
+          combined_text += extract_text(file)
 
-                prompt = f"""
+        prompt = f"""
                 당신은 간호교육인증평가 및 교육품질관리(CQI) 전문가입니다.
                 제출된 문서를 바탕으로 다음 3가지 핵심 항목 및 세부 지표를 엄격히 점검해 주세요.
 
@@ -83,12 +109,40 @@ if uploaded_files:
                 제출 문서 내용:
                 {combined_text}
                 """
-                response = client.models.generate_content(
-                    model='gemini-3.6-flash',
-                    contents=prompt
-                )
-                st.success("점검 완료!")
-                st.markdown("### 📋 AI 점검 리포트")
-                st.markdown(response.text)
-            except Exception as e:
-                st.error(f"분석 중 오류가 발생했습니다: {e}")
+        response = client.models.generate_content(
+            model="gemini-3.6-flash", contents=prompt
+        )
+
+        st.session_state["report"] = response.text
+        st.success("점검 완료!")
+
+      except Exception as e:
+        st.error(f"분석 중 오류가 발생했습니다: {e}")
+
+if "report" in st.session_state:
+  st.markdown("### 📋 AI 점검 리포트")
+  st.markdown(st.session_state["report"])
+
+  st.divider()
+  st.subheader("📥 점검 리포트 다운로드")
+
+  col1, col2 = st.columns(2)
+
+  with col1:
+    # Word 다운로드 버튼
+    docx_bytes = create_docx(st.session_state["report"])
+    st.download_button(
+        label="📄 Word 파일 (.docx) 다운로드",
+        data=docx_bytes,
+        file_name="간호교육_포트폴리오_점검리포트.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+  with col2:
+    # TXT 다운로드 버튼
+    st.download_button(
+        label="📝 텍스트 파일 (.txt) 다운로드",
+        data=st.session_state["report"],
+        file_name="간호교육_포트폴리오_점검리포트.txt",
+        mime="text/plain",
+    )

@@ -7,7 +7,7 @@ import pypdf
 # 화면 설정
 st.set_page_config(page_title="간호학과 포트폴리오 점검", layout="centered")
 st.title("🩺 간호교육 포트폴리오 AI 점검")
-st.write("포트폴리오 파일(PDF/Word)을 업로드하면 AI가 자동 점검합니다.")
+st.write("포트폴리오 파일들(PDF/Word)을 한꺼번에 업로드하면 AI가 통합 점검합니다.")
 
 # API 키 확인
 api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
@@ -17,8 +17,12 @@ if not api_key:
 
 client = genai.Client(api_key=api_key)
 
-# 파일 업로드
-uploaded_file = st.file_uploader("포트폴리오 파일 선택 (.docx, .pdf)", type=["docx", "pdf"])
+# 다중 파일 업로드 (accept_multiple_files=True)
+uploaded_files = st.file_uploader(
+    "포트폴리오 파일 선택 (.docx, .pdf) - 여러 파일 선택 가능", 
+    type=["docx", "pdf"], 
+    accept_multiple_files=True
+)
 
 def extract_text(file):
     ext = os.path.splitext(file.name)[1].lower()
@@ -35,12 +39,20 @@ def extract_text(file):
                 full_text.append(text)
     return "\n".join(full_text)
 
-if uploaded_file is not None:
-    st.info(f"선택된 파일: {uploaded_file.name}")
+if uploaded_files:
+    st.info(f"선택된 파일 수: 총 {len(uploaded_files)}개")
+    for f in uploaded_files:
+        st.write(f"- {f.name}")
+
     if st.button("AI 점검 시작"):
-        with st.spinner("AI가 포트폴리오를 분석 중입니다..."):
+        with st.spinner("AI가 제출된 문서 전체를 통합 분석 중입니다..."):
             try:
-                text = extract_text(uploaded_file)
+                # 모든 파일의 텍스트 추출 및 결합
+                combined_text = ""
+                for file in uploaded_files:
+                    combined_text += f"\n\n--- [파일명: {file.name}] ---\n"
+                    combined_text += extract_text(file)
+
                 prompt = f"""
                 당신은 간호교육인증평가 및 교육품질관리(CQI) 전문가입니다.
                 제출된 문서를 바탕으로 다음 3가지 핵심 항목 및 세부 지표를 엄격히 점검해 주세요.
@@ -63,12 +75,13 @@ if uploaded_file is not None:
                      * 단, 학번과 적용 기준이 다를 경우 보고서 내에 복학/재수강 등 예외 사유나 학년 기준 적용 표기가 되어 있는지 확인
                    - [미성취자 관리 및 환류]: 해당 학년 기준 [하] 성취수준 학생에 대한 구체적인 지도, 재평가, 보완 프로그램 등 미성취자 관리가 철저히 수행되었는가?
                    - [차기 학기 환류계획]: 이전 CQI 반영 여부 및 차기 학기 개선계획이 실현 가능한가?
+
                 [작성 형식]
                 - 각 항목별로 [적합], [보완 필요], [미흡] 판정을 명시해 주세요.
-                - 대상 학번에 따른 [하] 성취수준 절단값(70% 미만 / 60% 미만) 오적용이나, 미성취자에 대한 관리 방안 미비 시 구체적인 보완 요구사항을 명확히 지적해 주세요.
+                - 학번과 실제 수강 학년 기준 오적용 여부 및 미성취자 관리 방안 미비 시 구체적인 보완 요구사항을 명확히 제시해 주세요.
 
                 제출 문서 내용:
-                {text}
+                {combined_text}
                 """
                 response = client.models.generate_content(
                     model='gemini-3.6-flash',
